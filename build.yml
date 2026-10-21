@@ -1,0 +1,359 @@
+name: Build AeroTV APK
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Gerar projeto Android
+        run: |
+          mkdir -p app/src/main/assets app/src/main/java/com/aerotv/launcher app/src/main/res/drawable
+          cp index.html app/src/main/assets/index.html
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "AeroTV"
+          include(":app")
+          EOF
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+          printf "org.gradle.jvmargs=-Xmx2g\nandroid.useAndroidX=true\n" > gradle.properties
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.aerotv.launcher"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.aerotv.launcher"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation("androidx.media3:media3-exoplayer:1.3.1")
+              implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
+          }
+          EOF
+          cat > app/src/main/res/drawable/banner.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="320dp" android:height="180dp" android:viewportWidth="320" android:viewportHeight="180">
+              <path android:fillColor="#1D8FE8" android:pathData="M0,0h320v180h-320z"/>
+              <path android:fillColor="#CCFFFFFF" android:pathData="M160,90m-50,0a50,50 0 1,1 100,0a50,50 0 1,1 -100,0"/>
+          </vector>
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-feature android:name="android.software.leanback" android:required="false"/>
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+              <queries>
+                  <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/></intent>
+                  <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent>
+              </queries>
+              <application android:label="AeroTV" android:icon="@drawable/banner" android:banner="@drawable/banner"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen" android:allowBackup="false" android:usesCleartextTraffic="true">
+                  <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask"
+                      android:configChanges="orientation|screenSize|keyboardHidden">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.HOME"/>
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <activity android:name=".PlayerActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden"/>
+              </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/aerotv/launcher/MainActivity.kt <<'EOF'
+          package com.aerotv.launcher
+
+          import android.app.Activity
+          import android.app.DownloadManager
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.Canvas
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.util.Base64
+          import android.webkit.JavascriptInterface
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.ByteArrayOutputStream
+          import java.net.URL
+
+          data class Ch(val n: String, val g: String, val l: String, val u: String)
+
+          class MainActivity : Activity() {
+              private lateinit var web: WebView
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  web = WebView(this)
+                  web.settings.javaScriptEnabled = true
+                  web.settings.domStorageEnabled = true
+                  web.addJavascriptInterface(Bridge(), "Android")
+                  web.webViewClient = object : WebViewClient() {
+                      override fun onPageFinished(view: WebView?, url: String?) { loadApps() }
+                  }
+                  web.loadUrl("file:///android_asset/index.html")
+                  setContentView(web)
+                  web.requestFocus()
+              }
+
+              private fun tryStart(i: Intent): Boolean = try {
+                  i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(i); true
+              } catch (e: Exception) { false }
+
+              private fun launchLike(rx: Regex): Boolean {
+                  val pm = packageManager
+                  for (cat in listOf(Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER)) {
+                      for (ri in pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(cat), 0)) {
+                          val pkg = ri.activityInfo.packageName
+                          if (pkg != packageName && rx.containsMatchIn(ri.loadLabel(pm).toString())) {
+                              val li = pm.getLaunchIntentForPackage(pkg)
+                              if (li != null && tryStart(li)) return true
+                          }
+                      }
+                  }
+                  return false
+              }
+
+              private fun parseM3u(text: String): List<Ch> {
+                  val out = ArrayList<Ch>()
+                  val rg = Regex("group-title=\"([^\"]*)\"")
+                  val rl = Regex("tvg-logo=\"([^\"]*)\"")
+                  var n = ""; var g = ""; var l = ""
+                  for (raw in text.lineSequence()) {
+                      val s = raw.trim()
+                      if (s.startsWith("#EXTINF")) {
+                          n = s.substringAfterLast(",").trim()
+                          g = rg.find(s)?.groupValues?.get(1) ?: ""
+                          l = rl.find(s)?.groupValues?.get(1) ?: ""
+                      } else if (s.isNotEmpty() && !s.startsWith("#")) {
+                          out.add(Ch(n.ifEmpty { s }, g.ifEmpty { "Outros" }, l, s))
+                          n = ""; g = ""; l = ""
+                      }
+                  }
+                  return out
+              }
+
+              inner class Bridge {
+                  @JavascriptInterface
+                  fun launch(pkg: String) {
+                      packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it) }
+                  }
+
+                  @JavascriptInterface
+                  fun getPlaylist(): String = getSharedPreferences("a", 0).getString("pl", "") ?: ""
+
+                  @JavascriptInterface
+                  fun loadPlaylist(url: String) {
+                      getSharedPreferences("a", 0).edit().putString("pl", url).apply()
+                      Thread {
+                          try {
+                              val conn = URL(url).openConnection()
+                              conn.connectTimeout = 15000
+                              conn.readTimeout = 30000
+                              val text = conn.getInputStream().bufferedReader().use { it.readText() }
+                              val list = parseM3u(text)
+                              if (list.isEmpty()) throw Exception("nenhum canal encontrado")
+                              PlayerActivity.list = list.map { it.n to it.u }
+                              val arr = JSONArray()
+                              list.forEachIndexed { i, c ->
+                                  arr.put(JSONObject().put("n", c.n).put("g", c.g).put("l", c.l).put("i", i))
+                              }
+                              runOnUiThread { web.evaluateJavascript("setChannels(" + arr.toString() + ")", null) }
+                          } catch (e: Exception) {
+                              val m = JSONObject.quote("Erro: " + (e.message ?: "falha ao baixar a lista"))
+                              runOnUiThread { web.evaluateJavascript("setChannels(null," + m + ")", null) }
+                          }
+                      }.start()
+                  }
+
+                  @JavascriptInterface
+                  fun play(i: Int) {
+                      startActivity(Intent(this@MainActivity, PlayerActivity::class.java).putExtra("i", i))
+                  }
+
+                  @JavascriptInterface
+                  fun live(): Boolean =
+                      launchLike(Regex("(?i)live channels|live tv|tv ao vivo|ao vivo|antena|sintonizador|^tv$")) ||
+                      tryStart(Intent(Intent.ACTION_VIEW, Uri.parse("content://android.media.tv/channel")))
+
+                  @JavascriptInterface
+                  fun files(): Boolean =
+                      launchLike(Regex("(?i)arquivos|files|file manager|gerenciador")) ||
+                      tryStart(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
+
+                  @JavascriptInterface
+                  fun settings(): Boolean = tryStart(Intent(Settings.ACTION_SETTINGS))
+              }
+
+              private fun collect(cat: String): List<JSONObject> {
+                  val pm = packageManager
+                  val seen = HashSet<String>()
+                  val list = ArrayList<JSONObject>()
+                  for (ri in pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(cat), 0)) {
+                      val pkg = ri.activityInfo.packageName
+                      if (pkg == packageName || !seen.add(pkg)) continue
+                      val bmp = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+                      val d = ri.loadIcon(pm)
+                      d.setBounds(0, 0, 96, 96)
+                      d.draw(Canvas(bmp))
+                      val out = ByteArrayOutputStream()
+                      bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                      list.add(JSONObject().put("n", ri.loadLabel(pm).toString()).put("p", pkg)
+                          .put("i", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)))
+                  }
+                  return list.sortedBy { it.getString("n").lowercase() }
+              }
+
+              private fun loadApps() {
+                  Thread {
+                      var apps = collect(Intent.CATEGORY_LEANBACK_LAUNCHER)
+                      if (apps.isEmpty()) apps = collect(Intent.CATEGORY_LAUNCHER)
+                      val json = JSONArray(apps).toString()
+                      runOnUiThread { web.evaluateJavascript("setApps(" + json + ")", null) }
+                  }.start()
+              }
+
+              @Deprecated("handled by the page")
+              override fun onBackPressed() {
+                  web.evaluateJavascript("onBack()", null)
+              }
+          }
+          EOF
+          cat > app/src/main/java/com/aerotv/launcher/PlayerActivity.kt <<'EOF'
+          package com.aerotv.launcher
+
+          import android.app.Activity
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.view.Gravity
+          import android.view.KeyEvent
+          import android.view.SurfaceView
+          import android.view.View
+          import android.view.WindowManager
+          import android.widget.FrameLayout
+          import android.widget.TextView
+          import androidx.media3.common.MediaItem
+          import androidx.media3.common.PlaybackException
+          import androidx.media3.common.Player
+          import androidx.media3.exoplayer.ExoPlayer
+
+          class PlayerActivity : Activity() {
+              companion object { var list: List<Pair<String, String>> = emptyList() }
+
+              private var player: ExoPlayer? = null
+              private lateinit var label: TextView
+              private val handler = Handler(Looper.getMainLooper())
+              private val hide = Runnable { label.visibility = View.GONE }
+              private var idx = 0
+
+              override fun onCreate(b: Bundle?) {
+                  super.onCreate(b)
+                  if (list.isEmpty()) { finish(); return }
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                  val root = FrameLayout(this)
+                  root.setBackgroundColor(Color.BLACK)
+                  val sv = SurfaceView(this)
+                  root.addView(sv, FrameLayout.LayoutParams(-1, -1))
+                  label = TextView(this)
+                  label.setTextColor(Color.WHITE)
+                  label.textSize = 24f
+                  label.setBackgroundColor(0x99000000.toInt())
+                  label.setPadding(40, 20, 40, 20)
+                  val lp = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START)
+                  lp.setMargins(48, 48, 0, 0)
+                  root.addView(label, lp)
+                  setContentView(root)
+                  idx = intent.getIntExtra("i", 0).coerceIn(0, list.size - 1)
+                  val p = ExoPlayer.Builder(this).build()
+                  p.setVideoSurfaceView(sv)
+                  p.addListener(object : Player.Listener {
+                      override fun onPlayerError(error: PlaybackException) {
+                          say(list[idx].first + " - não foi possível reproduzir", false)
+                      }
+                  })
+                  player = p
+                  play()
+              }
+
+              private fun say(t: String, auto: Boolean = true) {
+                  label.text = t
+                  label.visibility = View.VISIBLE
+                  handler.removeCallbacks(hide)
+                  if (auto) handler.postDelayed(hide, 3000)
+              }
+
+              private fun play() {
+                  val (n, u) = list[idx]
+                  say(n)
+                  player?.setMediaItem(MediaItem.fromUri(u))
+                  player?.prepare()
+                  player?.playWhenReady = true
+              }
+
+              override fun onKeyDown(code: Int, e: KeyEvent): Boolean {
+                  val n = list.size
+                  when (code) {
+                      KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> { idx = (idx + 1) % n; play(); return true }
+                      KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> { idx = (idx - 1 + n) % n; play(); return true }
+                      KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { say(list[idx].first); return true }
+                  }
+                  return super.onKeyDown(code, e)
+              }
+
+              override fun onDestroy() {
+                  player?.release()
+                  player = null
+                  super.onDestroy()
+              }
+          }
+          EOF
+      - name: Compilar
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AeroTV-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: AeroTV build ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
