@@ -1,0 +1,175 @@
+name: Build AeroTV APK
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Gerar projeto Android
+        run: |
+          mkdir -p app/src/main/assets app/src/main/java/com/aerotv/launcher app/src/main/res/drawable
+          cp index.html app/src/main/assets/index.html
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "AeroTV"
+          include(":app")
+          EOF
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+          echo "org.gradle.jvmargs=-Xmx2g" > gradle.properties
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.aerotv.launcher"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.aerotv.launcher"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          EOF
+          cat > app/src/main/res/drawable/banner.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="320dp" android:height="180dp" android:viewportWidth="320" android:viewportHeight="180">
+              <path android:fillColor="#1D8FE8" android:pathData="M0,0h320v180h-320z"/>
+              <path android:fillColor="#CCFFFFFF" android:pathData="M160,90m-50,0a50,50 0 1,1 100,0a50,50 0 1,1 -100,0"/>
+          </vector>
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-feature android:name="android.software.leanback" android:required="false"/>
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+              <queries>
+                  <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/></intent>
+                  <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent>
+              </queries>
+              <application android:label="AeroTV" android:icon="@drawable/banner" android:banner="@drawable/banner"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen" android:allowBackup="false">
+                  <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask"
+                      android:configChanges="orientation|screenSize|keyboardHidden">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.HOME"/>
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/aerotv/launcher/MainActivity.kt <<'EOF'
+          package com.aerotv.launcher
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.Canvas
+          import android.os.Bundle
+          import android.util.Base64
+          import android.webkit.JavascriptInterface
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.ByteArrayOutputStream
+
+          class MainActivity : Activity() {
+              private lateinit var web: WebView
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  web = WebView(this)
+                  web.settings.javaScriptEnabled = true
+                  web.settings.domStorageEnabled = true
+                  web.addJavascriptInterface(Bridge(), "Android")
+                  web.webViewClient = object : WebViewClient() {
+                      override fun onPageFinished(view: WebView?, url: String?) { loadApps() }
+                  }
+                  web.loadUrl("file:///android_asset/index.html")
+                  setContentView(web)
+                  web.requestFocus()
+              }
+
+              inner class Bridge {
+                  @JavascriptInterface
+                  fun launch(pkg: String) {
+                      packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it) }
+                  }
+              }
+
+              private fun collect(cat: String): List<JSONObject> {
+                  val pm = packageManager
+                  val seen = HashSet<String>()
+                  val list = ArrayList<JSONObject>()
+                  val intent = Intent(Intent.ACTION_MAIN).addCategory(cat)
+                  for (ri in pm.queryIntentActivities(intent, 0)) {
+                      val pkg = ri.activityInfo.packageName
+                      if (pkg == packageName || !seen.add(pkg)) continue
+                      val bmp = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+                      val d = ri.loadIcon(pm)
+                      d.setBounds(0, 0, 96, 96)
+                      d.draw(Canvas(bmp))
+                      val out = ByteArrayOutputStream()
+                      bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                      list.add(JSONObject().put("n", ri.loadLabel(pm).toString()).put("p", pkg)
+                          .put("i", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)))
+                  }
+                  return list.sortedBy { it.getString("n").lowercase() }
+              }
+
+              private fun loadApps() {
+                  Thread {
+                      var apps = collect(Intent.CATEGORY_LEANBACK_LAUNCHER)
+                      if (apps.isEmpty()) apps = collect(Intent.CATEGORY_LAUNCHER)
+                      val json = JSONArray(apps).toString()
+                      runOnUiThread { web.evaluateJavascript("setApps($json)", null) }
+                  }.start()
+              }
+
+              @Deprecated("launcher ignores back")
+              override fun onBackPressed() {}
+          }
+          EOF
+      - name: Compilar
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AeroTV-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: AeroTV build ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
+          
