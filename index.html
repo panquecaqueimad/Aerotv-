@@ -77,6 +77,19 @@ h2{margin:0 0 0 4.6vw;font-size:clamp(13px,1.5vw,20px);font-weight:500;color:var
   background:rgba(10,20,35,.78);border:1px solid rgba(255,255,255,.3);box-shadow:0 12px 40px rgba(0,0,0,.5);font-size:clamp(13px,1.8vw,24px)}
 .hud i{display:block;font-style:normal;font-size:2.6em}.hud.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
 @media (max-width:700px){.mo~span.m{display:none}.hero{padding:0 5vw}.hc{max-width:62%}.art{opacity:.5}}
+.v i{display:grid;place-items:center;width:100%;height:100%;line-height:1}.v img{display:block}.di{line-height:1}
+.ov{position:fixed;inset:0;z-index:20;display:none;padding:calc(env(safe-area-inset-top,0px) + 3vh) 4vw 3vh;background:rgba(5,25,50,.5);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);font-size:clamp(13px,1.6vw,22px);color:#fff}
+.ov.open{display:block}
+.ovb{height:100%;display:flex;flex-direction:column;gap:1.4vh;padding:2vh 2vw;border-radius:20px;border:1px solid rgba(255,255,255,.7);background:linear-gradient(rgba(60,120,180,.55),rgba(5,30,60,.8));box-shadow:0 16px 40px rgba(0,20,60,.6),inset 0 1px 0 rgba(255,255,255,.7)}
+.ovh{display:flex;justify-content:space-between;align-items:center;font-size:1.2em}.ovh span{font-size:.65em;opacity:.8}
+.bar{display:flex;gap:1vw}.bar input{flex:1;min-width:0}
+.cols{flex:1;min-height:0;display:flex;gap:1.5vw}.gl{width:26%}.gl,.cl{overflow-y:auto;scrollbar-width:none}.cl{flex:1}
+.ov .f{display:block;padding:.55em .9em;margin-bottom:.4em;border-radius:12px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;font:inherit;text-align:left}
+.ov input.f{margin:0;outline:none}.ov .gel{display:inline-flex;margin:0;white-space:nowrap}
+.ov .f.on{background:linear-gradient(rgba(255,255,255,.85),rgba(143,255,238,.55));color:#06304f;box-shadow:0 0 14px #8fffee}
+.ov .ch img{width:2em;height:2em;object-fit:contain;border-radius:6px;background:rgba(255,255,255,.25);margin-right:.7em;vertical-align:middle}
+.msg{font-size:.8em;opacity:.85;min-height:1.2em}
+.di.on{transform:scale(1.55) translateY(-4px);box-shadow:0 0 0 2px #fff,0 0 18px #8fffee,0 3px 6px rgba(0,40,100,.35)}
 </style>
 </head>
 <body>
@@ -85,9 +98,20 @@ h2{margin:0 0 0 4.6vw;font-size:clamp(13px,1.5vw,20px);font-weight:500;color:var
 <section class="hero" id="hero"><div class="hc" id="hc"></div><div class="art" id="art"></div></section>
 <main id="rows"></main>
 <div class="dock">
-  <div class="di r" style="--c1:#9fe8ff;--c2:#2a8fd8">🏠</div><div class="di" style="--c1:#fff;--c2:#b8d4e8">🔍</div><div class="di r" style="--c1:#ffe27a;--c2:#e6a516">📁</div><div class="di" style="--c1:#d5e4ee;--c2:#6d8ea3">⚙️</div>
-  <div class="sep"></div><div class="di" style="--c1:#e8f2f8;--c2:#9fb8c8">🗑️</div>
+  <div class="di" data-a="home" style="--c1:#9fe8ff;--c2:#2a8fd8">🏠</div><div class="di" data-a="search" style="--c1:#fff;--c2:#b8d4e8">🔍</div><div class="di" data-a="ch" style="--c1:#a6f0a0;--c2:#2fa84f">📺</div><div class="di" data-a="tv" style="--c1:#7de8ff;--c2:#1b8fe0">📡</div><div class="di" data-a="files" style="--c1:#ffe27a;--c2:#e6a516">📁</div>
+  <div class="sep"></div><div class="di" data-a="set" style="--c1:#d5e4ee;--c2:#6d8ea3">⚙️</div>
 </div>
+<div class="ov" id="ov"><div class="ovb">
+  <div class="ovh"><b>📺 Canais</b><span>OK abre · Voltar fecha</span></div>
+  <div class="bar"><input class="f" id="url" placeholder="Cole o link da sua lista M3U (IPTV)" autocomplete="off" autocapitalize="off" inputmode="url"><button class="f gel" id="bl">Carregar</button><button class="f gel" id="ba">📡 Antena</button></div>
+  <div class="cols"><div class="gl" id="gl"></div><div class="cl" id="cl"></div></div>
+  <div class="msg" id="msg"></div>
+</div></div>
+<div class="ov" id="sr"><div class="ovb">
+  <div class="ovh"><b>🔍 Buscar apps</b></div>
+  <input class="f" id="sq" placeholder="Digite o nome do app" autocomplete="off">
+  <div class="cl" id="sl"></div>
+</div></div>
 <script>
 const R=[
  {t:"Apps",k:"ic",items:[
@@ -95,7 +119,7 @@ const R=[
   ["Música","🎵","#5ee0ff","#0a84d8","Noites Aqua","Álbum novo · 12 faixas","▶ Ouvir","#33c4f0","#0a4f9f"],
   ["Fotos","🌸","#ffb0d8","#e0489a","Verão de 2009","248 fotos · Memórias","▶ Ver álbum","#ff8fc4","#b02a78"],
   ["Jogos","🎮","#b89bff","#6a3fd8","Arena de Bolhas","Multijogador · 1 a 4","▶ Jogar","#9b7bff","#4a26b0"],
-  ["Canais","📺","#a6f0a0","#2fa84f","Jornal da Noite","Ao vivo agora","▶ Assistir","#58d070","#1a7a3a"],
+  ["Canais","📺","#a6f0a0","#2fa84f","Jornal da Noite","Ao vivo agora","▶ Assistir","#58d070","#1a7a3a",null,null,null,"ch"],
   ["Navegador","🌐","#7de8ff","#1b8fe0","Descubra a web","Seus sites favoritos","Abrir","#2aa0f0","#0a5fb0"],
   ["Ajustes","⚙️","#e3edf4","#7d9bb0","Preferências","Rede, som e tela","Abrir","#8fb0c8","#4a6a85"]]},
  {t:"Continuar assistindo",k:"cd",items:[
@@ -126,12 +150,72 @@ function paint(sc){
   if(sc)G[ri][ci].scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"})}
 const hud=document.getElementById("hud");let tm;
 function say(ic,m){hud.innerHTML=`<i>${ic}</i>${m}`;hud.classList.add("show");clearTimeout(tm);tm=setTimeout(()=>hud.classList.remove("show"),1500)}
-function go(){const d=R[ri].items[ci];say(d[11]?"📱":d[1],"Abrindo "+d[0]+"…");if(d[10]&&window.Android)setTimeout(()=>Android.launch(d[10]),350)}
+function go(){const d=R[ri].items[ci];if(d[12]){act(d[12]);return}say(d[11]?"📱":d[1],"Abrindo "+d[0]+"…");if(d[10]&&window.Android)setTimeout(()=>Android.launch(d[10]),350)}
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const ul=$("url"),gl=$("gl"),cl=$("cl"),sq=$("sq"),sl=$("sl"),DK=[...document.querySelectorAll(".di")];
+let mode="home",dk=0,CH=[],GR=[],gk=0,Z=0,K=0,ovO=false,srO=false,srRes=[],sk=-1;
+function dkPaint(){DK.forEach((e,i)=>e.classList.toggle("on",mode==="dock"&&i===dk))}
+function closeAll(){ovO=srO=false;$("ov").classList.remove("open");$("sr").classList.remove("open");ul.blur();sq.blur()}
+window.onBack=()=>{if(ovO||srO)closeAll()};
+function msg(t){$("msg").textContent=t}
+function act(a){
+  if(a==="home"){mode="home";ri=0;ci=0;paint(true);dkPaint()}
+  else if(a==="search")openSr();
+  else if(a==="ch")openOv();
+  else if(!window.Android)say("📱","Disponível só no app");
+  else if(a==="tv"){if(!Android.live())say("📡","Nenhum app de TV ao vivo encontrado")}
+  else if(a==="files"){if(!Android.files())say("📁","Nenhum gerenciador de arquivos")}
+  else if(a==="set")Android.settings();
+  else if(a==="upd")Android.checkUpdate();
+  else if(a==="aut"){const on=Android.toggleAuto();say("⏰","Atualização automática "+(on?"ligada":"desligada"))}}
+window.upd=m=>say("🔄",m);
+DK.forEach(e=>e.addEventListener("click",()=>act(e.dataset.a)));
+/* canais / IPTV */
+function loadPl(){const u=ul.value.trim();if(!u)return msg("Cole o link da lista M3U acima");if(!window.Android)return msg("Disponível só no app");msg("Carregando lista…");Android.loadPlaylist(u)}
+function openOv(){ovO=true;$("ov").classList.add("open");if(window.Android)ul.value=ul.value||Android.getPlaylist();if(ul.value&&!CH.length)loadPl();Z=CH.length?1:0;K=Z?gk:(ul.value?1:0);ovMark()}
+window.setChannels=function(a,err){if(!a){msg(err||"Erro ao carregar");return}CH=a;GR=["Todos"].concat([...new Set(a.map(c=>c.g))]);msg(a.length+" canais");gl.innerHTML=GR.map(g=>`<div class="f">${esc(g)}</div>`).join("");selG(0);Z=1;K=0;ovMark()};
+function selG(k){gk=k;const g=GR[k];cl.innerHTML=CH.filter(c=>k===0||c.g===g).slice(0,300).map(c=>`<div class="f ch" data-i="${c.i}">${c.l?`<img alt="" src="${esc(c.l)}" onerror="this.remove()">`:""}${esc(c.n)}</div>`).join("")}
+const zs=()=>[[ul,$("bl"),$("ba")],[...gl.children],[...cl.children]];
+function ovMark(){document.querySelectorAll("#ov .f").forEach(e=>e.classList.remove("on"));const el=zs()[Z][K];if(!el)return;el.classList.add("on");el.scrollIntoView({block:"nearest"});if(el===ul)ul.focus();else ul.blur()}
+function ovKey(k){
+  const n=zs()[Z].length;
+  if(k==="ArrowRight"){if(Z===0)K=Math.min(K+1,2);else if(Z===1&&cl.children.length){Z=2;K=0}}
+  else if(k==="ArrowLeft"){if(Z===0)K=Math.max(K-1,0);else if(Z===2){Z=1;K=gk}}
+  else if(k==="ArrowDown"){if(Z===0&&gl.children.length){Z=1;K=gk}else K=Math.min(K+1,n-1)}
+  else if(k==="ArrowUp"){if(K>0)K--;else if(Z>0){Z=0;K=0}}
+  else if(k==="Enter"){if(Z===0){K===2?act("tv"):loadPl()}else if(Z===2&&window.Android)Android.play(+cl.children[K].dataset.i)}
+  else if(k==="Escape")closeAll();
+  else return false;
+  if(Z===1&&k!=="Enter")selG(K);
+  ovMark();return true}
+/* busca */
+function openSr(){srO=true;$("sr").classList.add("open");sq.value="";sk=-1;srFill();srMark()}
+function srFill(){const q=sq.value.toLowerCase();srRes=R[0].items.filter(d=>d[10]&&d[0].toLowerCase().includes(q)).slice(0,60);sl.innerHTML=srRes.map(d=>`<div class="f ch"><img alt="" src="data:image/png;base64,${d[11]}">${esc(d[0])}</div>`).join("")}
+function srMark(){document.querySelectorAll("#sr .f").forEach(e=>e.classList.remove("on"));if(sk<0){sq.classList.add("on");sq.focus()}else{sq.blur();const el=sl.children[sk];if(el){el.classList.add("on");el.scrollIntoView({block:"nearest"})}}}
+function srKey(k){
+  if(k==="ArrowDown"||(k==="Enter"&&sk<0))sk=Math.min(sk+1,srRes.length-1);
+  else if(k==="ArrowUp")sk=Math.max(sk-1,-1);
+  else if(k==="Enter"){if(window.Android)Android.launch(srRes[sk][10])}
+  else if(k==="Escape")closeAll();
+  else return false;
+  srMark();return true}
+sq.addEventListener("input",()=>{sk=-1;srFill()});
+/* teclas */
 addEventListener("keydown",e=>{
   const k=e.key;
+  if(ovO){if(ovKey(k))e.preventDefault();return}
+  if(srO){if(srKey(k))e.preventDefault();return}
+  if(mode==="dock"){
+    if(k==="ArrowRight")dk=Math.min(dk+1,DK.length-1);
+    else if(k==="ArrowLeft")dk=Math.max(dk-1,0);
+    else if(k==="ArrowUp")mode="home";
+    else if(k==="Enter"||k===" ")act(DK[dk].dataset.a);
+    else return;
+    e.preventDefault();dkPaint();if(mode==="home")paint(true);return}
   if(k==="ArrowRight")ci=Math.min(ci+1,G[ri].length-1);
   else if(k==="ArrowLeft")ci=Math.max(ci-1,0);
-  else if(k==="ArrowDown"){ri=Math.min(ri+1,G.length-1);ci=Math.min(ci,G[ri].length-1)}
+  else if(k==="ArrowDown"){if(ri===G.length-1){mode="dock";G.forEach(r=>r.forEach(x=>x.classList.remove("on")));e.preventDefault();dkPaint();return}ri++;ci=Math.min(ci,G[ri].length-1)}
   else if(k==="ArrowUp"){ri=Math.max(ri-1,0);ci=Math.min(ci,G[ri].length-1)}
   else if(k==="Enter"||k===" ")go();
   else return;
@@ -147,7 +231,8 @@ build();
 for(let i=0;i<10;i++){const b=document.createElement("div"),z=18+Math.random()*80;b.className="bubble";
   b.style.cssText=`width:${z}px;height:${z}px;left:${Math.random()*100}%;top:${100+Math.random()*20}vh;animation-duration:${26+Math.random()*30}s;animation-delay:-${Math.random()*40}s`;document.body.prepend(b)}
 function tick(){const d=new Date();document.getElementById("clk").textContent=d.toLocaleDateString("pt-BR",{weekday:"short"})+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
-window.setApps=function(l){if(!l.length)return;R[0].t="Meus apps";R[0].items=l.map(a=>[a.n,"📱","#9fe0ff","#2a8fd8",a.n,"Aplicativo instalado","Abrir","#2aa0f0","#0a5fb0",null,a.p,a.i]);ri=0;ci=0;last=null;build();paint(true)};
+const BI=[["Canais","📺","#a6f0a0","#2fa84f","Canais","IPTV · listas M3U","Abrir","#58d070","#1a7a3a",null,null,null,"ch"],["TV ao vivo","📡","#7de8ff","#1b8fe0","TV ao vivo","Antena · sintonizador","Abrir","#2aa0f0","#0a5fb0",null,null,null,"tv"],["Atualizar","🔄","#b6f58a","#2f9f3f","Atualizar","Procurar e instalar nova versão","Verificar","#58d070","#1a7a3a",null,null,null,"upd"],["Auto-update","⏰","#ffe27a","#e6a516","Atualização automática","Liga ou desliga a checagem ao abrir","Alternar","#f0b040","#b06a10",null,null,null,"aut"]];
+window.setApps=function(l){if(!l.length)return;R.length=1;R[0].t="Meus apps";R[0].items=BI.concat(l.map(a=>[a.n,"📱","#9fe0ff","#2a8fd8",a.n,"Aplicativo instalado","Abrir","#2aa0f0","#0a5fb0",null,a.p,a.i]));ri=0;ci=0;last=null;build();paint(true)};
 tick();setInterval(tick,15000);paint(false);
 </script>
 </body>
