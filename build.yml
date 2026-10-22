@@ -16,10 +16,27 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
+      - name: Chave de assinatura
+        run: |
+          if [ ! -f aerotv.keystore ]; then
+            keytool -genkeypair -keystore aerotv.keystore -storepass aerotv123 -keypass aerotv123 -alias aerotv -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=AeroTV"
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add aerotv.keystore
+            git commit -m "Chave de assinatura do AeroTV"
+            git push
+          fi
+      - name: Versão
+        id: v
+        run: |
+          echo "vc=$(( $(date +%s) / 60 ))" >> "$GITHUB_OUTPUT"
+          echo "name=$(date -u +'%d/%m/%Y %H:%M')" >> "$GITHUB_OUTPUT"
       - name: Gerar projeto Android
         run: |
-          mkdir -p app/src/main/assets app/src/main/java/com/aerotv/launcher app/src/main/res/drawable
+          mkdir -p app/src/main/assets app/src/main/java/com/aerotv/launcher app/src/main/res/drawable app/src/main/res/xml
           cp index.html app/src/main/assets/index.html
+          echo "${{ github.repository }}" > app/src/main/assets/repo.txt
+          printf '<paths><external-files-path name="u" path="."/></paths>' > app/src/main/res/xml/paths.xml
           cat > settings.gradle.kts <<'EOF'
           pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
           dependencyResolutionManagement { repositories { google(); mavenCentral() } }
@@ -45,16 +62,28 @@ jobs:
                   applicationId = "com.aerotv.launcher"
                   minSdk = 21
                   targetSdk = 34
-                  versionCode = 1
+                  versionCode = (project.findProperty("verCode") as String?)?.toIntOrNull() ?: 1
                   versionName = "1.0"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
                   targetCompatibility = JavaVersion.VERSION_17
               }
+              signingConfigs {
+                  create("aero") {
+                      storeFile = file("../aerotv.keystore")
+                      storePassword = "aerotv123"
+                      keyAlias = "aerotv"
+                      keyPassword = "aerotv123"
+                  }
+              }
+              buildTypes {
+                  getByName("debug") { signingConfig = signingConfigs.getByName("aero") }
+              }
               kotlinOptions { jvmTarget = "17" }
           }
           dependencies {
+              implementation("androidx.core:core:1.13.1")
               implementation("androidx.media3:media3-exoplayer:1.3.1")
               implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
           }
@@ -69,6 +98,7 @@ jobs:
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
               <uses-feature android:name="android.software.leanback" android:required="false"/>
               <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
               <queries>
@@ -90,6 +120,9 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
+                  <provider android:name="androidx.core.content.FileProvider" android:authorities="com.aerotv.launcher.fp" android:exported="false" android:grantUriPermissions="true">
+                      <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/paths"/>
+                  </provider>
                   <activity android:name=".PlayerActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden"/>
               </application>
           </manifest>
@@ -103,6 +136,7 @@ jobs:
           import android.graphics.Bitmap
           import android.graphics.Canvas
           import android.net.Uri
+          import android.os.Build
           import android.os.Bundle
           import android.provider.Settings
           import android.util.Base64
@@ -112,12 +146,16 @@ jobs:
           import org.json.JSONArray
           import org.json.JSONObject
           import java.io.ByteArrayOutputStream
+          import java.io.File
+          import java.net.HttpURLConnection
           import java.net.URL
+          import androidx.core.content.FileProvider
 
           data class Ch(val n: String, val g: String, val l: String, val u: String)
 
           class MainActivity : Activity() {
               private lateinit var web: WebView
+              private var checked = false
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
@@ -126,7 +164,13 @@ jobs:
                   web.settings.domStorageEnabled = true
                   web.addJavascriptInterface(Bridge(), "Android")
                   web.webViewClient = object : WebViewClient() {
-                      override fun onPageFinished(view: WebView?, url: String?) { loadApps() }
+                      override fun onPageFinished(view: WebView?, url: String?) {
+                          loadApps()
+                          if (!checked) {
+                              checked = true
+                              if (getSharedPreferences("a", 0).getBoolean("auto", true)) doUpdate(false)
+                          }
+                      }
                   }
                   web.loadUrl("file:///android_asset/index.html")
                   setContentView(web)
@@ -220,6 +264,16 @@ jobs:
 
                   @JavascriptInterface
                   fun settings(): Boolean = tryStart(Intent(Settings.ACTION_SETTINGS))
+                  @JavascriptInterface
+                  fun checkUpdate() { doUpdate(true) }
+
+                  @JavascriptInterface
+                  fun toggleAuto(): Boolean {
+                      val p = getSharedPreferences("a", 0)
+                      val n = !p.getBoolean("auto", true)
+                      p.edit().putBoolean("auto", n).apply()
+                      return n
+                  }
               }
 
               private fun collect(cat: String): List<JSONObject> {
@@ -250,6 +304,58 @@ jobs:
                   }.start()
               }
 
+                        private fun say(m: String) {
+                  runOnUiThread { web.evaluateJavascript("upd(" + JSONObject.quote(m) + ")", null) }
+              }
+
+              private fun doUpdate(manual: Boolean) {
+                  Thread {
+                      try {
+                          if (manual) say("Verificando atualizações…")
+                          val repo = assets.open("repo.txt").bufferedReader().use { it.readText().trim() }
+                          val c = URL("https://api.github.com/repos/" + repo + "/releases/latest").openConnection() as HttpURLConnection
+                          c.setRequestProperty("User-Agent", "AeroTV")
+                          c.setRequestProperty("Accept", "application/vnd.github+json")
+                          c.connectTimeout = 15000
+                          c.readTimeout = 15000
+                          val j = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                          val remote = j.getString("tag_name").filter { it.isDigit() }.toLongOrNull() ?: 0L
+                          @Suppress("DEPRECATION")
+                          val local = packageManager.getPackageInfo(packageName, 0).versionCode.toLong()
+                          if (remote <= local) {
+                              if (manual) say("Você já está na versão mais recente")
+                              return@Thread
+                          }
+                          val ass = j.getJSONArray("assets")
+                          var url = ""
+                          for (k in 0 until ass.length()) {
+                              val a = ass.getJSONObject(k)
+                              if (a.getString("name").endsWith(".apk")) url = a.getString("browser_download_url")
+                          }
+                          if (url.isEmpty()) {
+                              if (manual) say("A versão nova não tem APK")
+                              return@Thread
+                          }
+                          say("Baixando atualização…")
+                          val f = File(getExternalFilesDir(null), "update.apk")
+                          URL(url).openStream().use { i -> f.outputStream().use { o -> i.copyTo(o) } }
+                          runOnUiThread { install(f) }
+                      } catch (e: Exception) {
+                          if (manual) say("Falha ao atualizar: " + (e.message ?: "erro"))
+                      }
+                  }.start()
+              }
+
+              private fun install(f: File) {
+                  if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+                      tryStart(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + packageName)))
+                      say("Permita instalar apps desta fonte e tente de novo")
+                      return
+                  }
+                  val uri = FileProvider.getUriForFile(this, "com.aerotv.launcher.fp", f)
+                  tryStart(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                      .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+              }
               @Deprecated("handled by the page")
               override fun onBackPressed() {
                   web.evaluateJavascript("onBack()", null)
@@ -347,14 +453,13 @@ jobs:
           }
           EOF
       - name: Compilar
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon -PverCode=${{ steps.v.outputs.vc }}
       - uses: actions/upload-artifact@v4
         with:
           name: AeroTV-apk
           path: app/build/outputs/apk/debug/app-debug.apk
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: apk-${{ github.run_number }}
-          name: AeroTV build ${{ github.run_number }}
+          tag_name: apk-${{ steps.v.outputs.vc }}
+          name: AeroTV ${{ steps.v.outputs.name }}
           files: app/build/outputs/apk/debug/app-debug.apk
-          
